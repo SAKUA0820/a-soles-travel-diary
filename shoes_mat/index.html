@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>A Sole's Travel Diary</title>
+  <script src="https://unpkg.com/obniz@3.x/obniz.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: #10100f;
+    }
+
+    #idle-image,
+    #pattern {
+      position: fixed;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+    }
+
+    #idle-image {
+      object-fit: cover;
+      opacity: 1;
+      transition: opacity 900ms ease;
+    }
+
+    #pattern {
+      opacity: 0;
+      transition: opacity 900ms ease;
+    }
+
+    body.has-session #idle-image {
+      opacity: 0;
+    }
+
+    body.has-session #pattern {
+      opacity: 1;
+    }
+
+    #status-panel {
+      position: fixed;
+      right: 20px;
+      bottom: 18px;
+      min-width: 220px;
+      padding: 12px 14px;
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      border-radius: 12px;
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(16, 16, 15, 0.68);
+      backdrop-filter: blur(10px);
+      font-size: 12px;
+      letter-spacing: 0.04em;
+    }
+
+    #status-text {
+      margin-bottom: 9px;
+    }
+
+    #progress-track {
+      width: 100%;
+      height: 3px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.16);
+    }
+
+    #progress-bar {
+      width: 0;
+      height: 100%;
+      border-radius: inherit;
+      background: rgba(255, 255, 255, 0.86);
+      transition: width 350ms ease;
+    }
+  </style>
+</head>
+<body>
+  <img id="idle-image" src="./default.JPG" alt="靴を置く前の画面">
+  <canvas id="pattern"></canvas>
+
+  <aside id="status-panel" aria-live="polite">
+    <div id="status-text">初期化しています</div>
+    <div id="progress-track"><div id="progress-bar"></div></div>
+  </aside>
+
+  <script>
+    // obniz Consoleへ置く公開コードなので、SUPABASE_KEYにはsecret/service_roleでは
+    // なくpublishable（または旧anon）キーだけを設定する。
+    const OBNIZ_ID = 'XXXX-XXXX';
+    const SUPABASE_URL = 'SUPABASE_URL';
+    const SUPABASE_KEY = 'SUPABASE_KEY';
+    const STORAGE_BUCKET = 'a-soles-travel-diary';
+
+    const canvas = document.querySelector('#pattern');
+    const context = canvas.getContext('2d');
+    const statusText = document.querySelector('#status-text');
+    const progressBar = document.querySelector('#progress-bar');
+
+    let supabaseClient = null;
+    let activeSession = null;
+    let activeManifest = null;
+    let activationSerial = 0;
+    let imageLoadQueue = Promise.resolve();
+    const loadedImages = new Map();
+
+    // CSS上の表示サイズと高DPI画面の実画素数を揃え、再描画時のぼやけを防ぐ。
+    function resizeCanvas() {
+      const ratio = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.floor(window.innerWidth * ratio));
+      const height = Math.max(1, Math.floor(window.innerHeight * ratio));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      drawPattern();
+    }
+
+    // JPEGがまだ届いていないタイルを、歩行時メタデータから決定的に着色する。
+    // 同じmanifestなら再読込しても同じ粗い模様になり、画像到着後だけ見た目が変わる。
+    function placeholderColor(image, index) {
+      const sharpness = Number(image.sharpness) || 0;
+      const similarity = Number(image.similarity_mad) || 0;
+      const pressure = Number(image.fsr_peak) || 0;
+      const hue = (index * 37 + sharpness * 0.73 + similarity * 8.4) % 360;
+      const saturation = 24 + Math.min(38, pressure / 100);
+      const lightness = 24 + Math.min(34, Math.sqrt(sharpness) * 2.5);
+      return `hsl(${hue} ${saturation}% ${lightness}%)`;
+    }
+
+    // 画像の縦横比を保ったまま、タイル全面を覆うよう中央トリミングして描く。
+    function drawImageCover(image, x, y, width, height) {
+      const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
+      const sourceWidth = width / scale;
+      const sourceHeight = height / scale;
+      const sourceX = (image.naturalWidth - sourceWidth) / 2;
+      const sourceY = (image.naturalHeight - sourceHeight) / 2;
+      context.drawImage(
+        image,
+        sourceX,
+        sourceY,
+        sourceWidth,
+        sourceHeight,
+        x,
+        y,
+        width,
+        height,
+      );
+    }
+
+    // manifestの全候補を先に格子として置き、取得済みタイルだけ床写真へ差し替える。
+    // これによりメタデータ到着直後から模様が現れ、転送に合わせて徐々に完成する。
+    function drawPattern() {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      if (!activeManifest?.images?.length) {
+        return;
+      }
+
+      const images = activeManifest.images;
+      const aspect = canvas.width / canvas.height;
+      const columns = Math.max(1, Math.ceil(Math.sqrt(images.length * aspect)));
+      const rows = Math.max(1, Math.ceil(images.length / columns));
+      const tileWidth = canvas.width / columns;
+      const tileHeight = canvas.height / rows;
+
+      images.forEach((metadata, index) => {
+        const column = index % columns;
+        const row = Math.floor(index / columns);
+        const x = column * tileWidth;
+        const y = row * tileHeight;
+        const image = loadedImages.get(metadata.storage_path);
+
+        context.save();
+        context.beginPath();
+        context.rect(x, y, tileWidth, tileHeight);
+        context.clip();
+        context.fillStyle = placeholderColor(metadata, index);
+        context.fillRect(x, y, tileWidth, tileHeight);
+
+        if (image) {
+          context.globalAlpha = 0.9;
+          drawImageCover(image, x, y, tileWidth, tileHeight);
+        } else {
+          context.globalAlpha = 0.16;
+          context.strokeStyle = '#fff';
+          context.lineWidth = Math.max(1, canvas.width / 1200);
+          context.beginPath();
+          context.moveTo(x, y + tileHeight);
+          context.lineTo(x + tileWidth, y);
+          context.stroke();
+        }
+        context.restore();
+
+        context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
+        context.lineWidth = Math.max(1, canvas.width / 1800);
+        context.strokeRect(x, y, tileWidth, tileHeight);
+      });
+    }
+
+    // Supabase StorageのBlobをCanvasで扱えるImageへ変換し、Object URLを解放する。
+    async function downloadImage(storagePath) {
+      const { data, error } = await supabaseClient.storage
+        .from(STORAGE_BUCKET)
+        .download(storagePath);
+      if (error) {
+        throw error;
+      }
+
+      const objectUrl = URL.createObjectURL(data);
+      try {
+        const image = new Image();
+        image.decoding = 'async';
+        image.src = objectUrl;
+        await image.decode();
+        return image;
+      } finally {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+
+    // uploaded_countまでを必ず順番に取得する。Realtime更新が連続してもPromise列へ
+    // 追加することで、同じ画像の二重取得や表示順の逆転を防ぐ。
+    function queueAvailableImages() {
+      const sessionId = activeSession?.id;
+      const serial = activationSerial;
+      imageLoadQueue = imageLoadQueue.then(async () => {
+        if (!activeManifest || activeSession?.id !== sessionId) {
+          return;
+        }
+
+        const availableCount = Math.min(
+          Number(activeSession.uploaded_count) || 0,
+          activeManifest.images.length,
+        );
+        for (let index = 0; index < availableCount; index += 1) {
+          if (serial !== activationSerial || activeSession?.id !== sessionId) {
+            return;
+          }
+          const metadata = activeManifest.images[index];
+          if (loadedImages.has(metadata.storage_path)) {
+            continue;
+          }
+          try {
+            const image = await downloadImage(metadata.storage_path);
+            if (serial !== activationSerial) {
+              return;
+            }
+            loadedImages.set(metadata.storage_path, image);
+            drawPattern();
+          } catch (error) {
+            // DB更新がStorageの反映よりわずかに先に見える場合を考慮し、次のポーリング
+            // またはRealtime更新で再試行できるようMapには追加しない。
+            console.warn('Image download will be retried:', metadata.storage_path, error);
+            break;
+          }
+        }
+      });
+    }
+
+    // 現在のセッション状態を短い進捗表示へ反映する。作品表示を妨げないよう、
+    // エラー詳細はconsoleへ出し、画面には状態と枚数だけを残す。
+    function updateProgress() {
+      if (!activeSession) {
+        statusText.textContent = '靴を置くのを待っています';
+        progressBar.style.width = '0%';
+        return;
+      }
+
+      const total = Math.max(1, Number(activeSession.image_count) || 1);
+      const uploaded = Math.min(total, Number(activeSession.uploaded_count) || 0);
+      const percent = Math.round((uploaded / total) * 100);
+      const labels = {
+        uploading: '旅の断片を受信しています',
+        complete: '旅の模様が完成しました',
+        failed: '転送を待ち直しています',
+      };
+      statusText.textContent = `${labels[activeSession.status] || activeSession.status}  ${uploaded}/${total}`;
+      progressBar.style.width = `${percent}%`;
+    }
+
+    // 新しいセッションでは最初にmanifestだけを取得し、粗い模様を直ちに表示する。
+    // 同じセッションのUPDATEではmanifestを再取得せず、画像の追加だけを進める。
+    async function applySession(session) {
+      if (!session?.id) {
+        return;
+      }
+
+      if (activeSession?.id === session.id) {
+        activeSession = session;
+        updateProgress();
+        queueAvailableImages();
+        return;
+      }
+
+      activeSession = session;
+      activeManifest = null;
+      activationSerial += 1;
+      const serial = activationSerial;
+      loadedImages.clear();
+      updateProgress();
+
+      const { data, error } = await supabaseClient.storage
+        .from(STORAGE_BUCKET)
+        .download(session.manifest_path);
+      if (serial !== activationSerial || activeSession?.id !== session.id) {
+        return;
+      }
+      if (error) {
+        console.error('Manifest download failed:', error);
+        statusText.textContent = 'メタデータを取得できませんでした';
+        return;
+      }
+
+      try {
+        const manifest = JSON.parse(await data.text());
+        if (serial !== activationSerial || activeSession?.id !== session.id) {
+          return;
+        }
+        if (manifest.session_id !== session.id || !Array.isArray(manifest.images)) {
+          throw new Error('Manifest does not match the session');
+        }
+        activeManifest = manifest;
+        document.body.classList.add('has-session');
+        drawPattern();
+        queueAvailableImages();
+      } catch (error) {
+        console.error('Manifest parse failed:', error);
+        statusText.textContent = 'メタデータの形式が不正です';
+      }
+    }
+
+    // Realtime切断や画面の再読み込みにも耐えるよう、最新行を定期確認する。
+    // 通常はRealtimeが即時反映し、このポーリングは取りこぼし時の保険として働く。
+    async function fetchLatestSession() {
+      const { data, error } = await supabaseClient
+        .from('transfer_sessions')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (error) {
+        console.error('Session fetch failed:', error);
+        statusText.textContent = 'Supabaseへ接続できません';
+        return;
+      }
+      if (data) {
+        await applySession(data);
+      } else {
+        updateProgress();
+      }
+    }
+
+    // obnizはindex.htmlの実行基盤として接続し、ボード側には準備状態だけを表示する。
+    // 画像通知と本体転送はSupabase経由なので、obniz接続断が描画を止めない構成。
+    function connectObniz() {
+      if (OBNIZ_ID.includes('X')) {
+        console.warn('Replace XXXX-XXXX with the obniz ID.');
+        return;
+      }
+
+      const obniz = new Obniz(OBNIZ_ID);
+      obniz.onconnect = async () => {
+        if (obniz.display) {
+          obniz.display.clear();
+          obniz.display.print('Mat ready');
+        }
+      };
+      obniz.onclose = () => console.warn('obniz connection closed');
+    }
+
+    // Supabaseの初回読込後にRealtimeを購読する。INSERTで生成開始、UPDATEで
+    // JPEG取得数を進める。SQL側でtransfer_sessionsをRealtime対象にする必要がある。
+    async function start() {
+      resizeCanvas();
+      window.addEventListener('resize', resizeCanvas);
+      connectObniz();
+
+      if (SUPABASE_URL === 'SUPABASE_URL' || SUPABASE_KEY === 'SUPABASE_KEY') {
+        statusText.textContent = 'SupabaseのURLとKEYを設定してください';
+        return;
+      }
+
+      supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+      await fetchLatestSession();
+
+      supabaseClient
+        .channel('shoe-transfer-sessions')
+        .on(
+          'postgres_changes',
+          { event: '*', schema: 'public', table: 'transfer_sessions' },
+          (payload) => applySession(payload.new),
+        )
+        .subscribe((state, error) => {
+          if (error) {
+            console.error('Realtime subscription failed:', state, error);
+          }
+        });
+
+      window.setInterval(fetchLatestSession, 10000);
+    }
+
+    start().catch((error) => {
+      console.error(error);
+      statusText.textContent = '初期化に失敗しました';
+    });
+  </script>
+</body>
+</html>
