@@ -8,7 +8,7 @@
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
     :root {
-      color-scheme: dark;
+      color-scheme: light;
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
 
@@ -18,8 +18,12 @@
       height: 100%;
       margin: 0;
       overflow: hidden;
-      background: #10100f;
+      background: #e9e5dc;
+      color: #363c33;
     }
+
+    body { cursor: none; }
+    body.settings-open { cursor: auto; }
 
     #idle-image,
     #pattern {
@@ -36,6 +40,7 @@
     }
 
     #pattern {
+      display: block;
       opacity: 0;
       transition: opacity 900ms ease;
     }
@@ -48,50 +53,75 @@
       opacity: 1;
     }
 
-    #status-panel {
-      position: fixed;
-      right: 20px;
-      bottom: 18px;
-      min-width: 220px;
-      padding: 12px 14px;
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 12px;
-      color: rgba(255, 255, 255, 0.9);
-      background: rgba(16, 16, 15, 0.68);
-      backdrop-filter: blur(10px);
-      font-size: 12px;
-      letter-spacing: 0.04em;
+    button, input { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button:disabled { opacity: .4; cursor: default; }
+    button:focus-visible, input:focus-visible { outline: 2px solid #597045; outline-offset: 4px; }
+    .button { border: 1px solid #b8bdae; background: #f8f6ef; padding: 9px 13px; border-radius: 3px; }
+    .button:hover:not(:disabled) { background: #e8ebdf; }
+    #tools {
+      position: fixed; top: 24px; right: 28px; bottom: 24px; width: 270px;
+      box-sizing: border-box; padding: 22px; overflow-y: auto;
+      background: #f8f6effa; border: 1px solid #ffffffa0; border-radius: 5px;
+      box-shadow: 0 12px 50px #2933211a; font-size: 12px;
     }
-
-    #status-text {
-      margin-bottom: 9px;
+    #tools h2 { font-size: 17px; font-weight: 500; margin: 0 0 8px; }
+    #tools p { color: #71776a; line-height: 1.8; margin: 0 0 18px; }
+    .tools-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+    #tools .tools-heading h2 { margin: 0; }
+    .control { display: block; margin: 23px 0; }
+    .control span { display: flex; justify-content: space-between; margin-bottom: 10px; }
+    .control output { color: #7c826f; font-size: 11px; }
+    input[type=range] { width: 100%; accent-color: #68725a; }
+    #palette { display: flex; height: 21px; gap: 5px; margin: 12px 0 24px; }
+    #palette span { flex: 1; border-radius: 2px; border: 1px solid #0000000a; }
+    #source-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 12px 0 20px; }
+    .source { padding: 0; border: 1px solid #b8bdae; border-radius: 2px; background: none; }
+    .source canvas { display: block; width: 100%; height: auto; }
+    .tool-actions { display: grid; gap: 8px; margin-top: 22px; }
+    #local-note { margin-top: 10px !important; font-size: 10px; }
+    #source-dialog { width: min(560px, calc(100vw - 64px)); padding: 22px; border: 0; background: #f8f6ef; color: #363c33; }
+    #source-dialog::backdrop { background: #182012aa; }
+    #source-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    #source-dialog h2 { font-size: 15px; font-weight: 500; overflow-wrap: anywhere; }
+    #source-preview { width: 100%; height: auto; image-rendering: auto; }
+    #source-dialog p { font-size: 12px; color: #71776a; line-height: 1.8; }
+    #image-input { display: none; }
+    @media (max-width: 600px) {
+      #tools { top: 12px; right: 12px; bottom: 12px; width: min(290px, calc(100vw - 24px)); }
     }
-
-    #progress-track {
-      width: 100%;
-      height: 3px;
-      overflow: hidden;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.16);
-    }
-
-    #progress-bar {
-      width: 0;
-      height: 100%;
-      border-radius: inherit;
-      background: rgba(255, 255, 255, 0.86);
-      transition: width 350ms ease;
+    @media (prefers-reduced-motion: reduce) {
+      #idle-image, #pattern { transition: none; }
     }
   </style>
 </head>
 <body>
   <img id="idle-image" src="./default.JPG" alt="靴を置く前の画面">
-  <canvas id="pattern"></canvas>
+  <canvas id="pattern" role="img" aria-label="歩いた床の形と色から織り上げる玄関マットの模様"></canvas>
 
-  <aside id="status-panel" aria-live="polite">
-    <div id="status-text">初期化しています</div>
-    <div id="progress-track"><div id="progress-bar"></div></div>
-  </aside>
+  <section id="tools" aria-label="模様の調整" hidden>
+    <header class="tools-heading"><h2>模様の調整</h2><button id="close-tools" class="button">閉じる</button></header>
+    <p id="status-text" role="status" aria-live="polite">初期化しています</p>
+    <label class="control"><span>模様の大きさ <output id="scale-value">ふつう</output></span><input id="pattern-scale" type="range" min="320" max="720" value="520" step="20"></label>
+    <label class="control"><span>床の輪郭 <output id="detail-value">ほどよく</output></span><input id="pattern-detail" type="range" min="0" max="100" value="60" step="5"></label>
+    <label class="control"><span>色味 <output id="color-value">おだやか</output></span><input id="pattern-color" type="range" min="0" max="100" value="30" step="5"></label>
+    <div>歩いた場所のパレット</div>
+    <div id="palette" aria-label="模様に使う5色"></div>
+    <div id="source-label">模様のもとになった床</div>
+    <div id="source-list"></div>
+    <div class="tool-actions">
+      <button class="button" id="choose-images">手元の写真で試す</button>
+      <button class="button" id="resume-live" hidden>靴からの受信に戻る</button>
+      <button class="button" id="save-pattern" disabled>模様をPNGで保存</button>
+    </div>
+    <p id="local-note">選んだ写真はこのブラウザ内で処理します。アップロードはしません。</p>
+    <input id="image-input" type="file" accept="image/*" multiple aria-label="床の写真を選ぶ">
+  </section>
+  <dialog id="source-dialog">
+    <header><h2 id="source-title">模様のもとになった床</h2><button class="button" id="close-source" aria-label="写真を閉じる">閉じる</button></header>
+    <canvas id="source-preview" width="384" height="288"></canvas>
+    <p>この写真の明暗と輪郭を、共通の5色に置き換えて使っています。写真が多いときは、質感の異なる最大6枚を模様の素材に選びます。</p>
+  </dialog>
 
   <script>
     // obniz Consoleへ置く公開コードなので、SUPABASE_KEYにはsecret/service_roleでは
@@ -104,7 +134,19 @@
     const canvas = document.querySelector('#pattern');
     const context = canvas.getContext('2d');
     const statusText = document.querySelector('#status-text');
-    const progressBar = document.querySelector('#progress-bar');
+
+    // 通信量は従来のまま。画像処理は表示端末のCanvasだけで完結する。
+    // 処理解像度と代表枚数を固定し、長い散歩でも生成時間とメモリを抑える。
+    const SAMPLE_WIDTH = 192;
+    const SAMPLE_HEIGHT = 144;
+    const MAX_IMAGES = 128;
+    const MAX_MOTIFS = 6;
+    const UNIT_WIDTH = 384;
+    const UNIT_HEIGHT = 256;
+    const REVEAL_DURATION_MS = 4200;
+    const MIN_REVEAL_DURATION_MS = 450;
+    const NEUTRAL_PALETTE = [[53, 61, 49], [100, 110, 91], [148, 154, 131], [188, 188, 163], [224, 219, 197]];
+    const settings = { scale: 520, detail: 60, color: 30 };
 
     let supabaseClient = null;
     let activeSession = null;
@@ -112,97 +154,479 @@
     let activationSerial = 0;
     let imageLoadQueue = Promise.resolve();
     const loadedImages = new Map();
+    let mode = 'live';
+    let localImporting = false;
+    let localErrors = 0;
+    let manifestRequest = null;
+    let fetchInProgress = false;
+    let renderVersion = 0;
+    let renderTimer = 0;
+    let rendering = false;
+    let art = null;
+    let foundation = null;
+    let previousArt = null;
+    let transitionStart = 0;
+    let paintFrame = 0;
+    let canvasPixelRatio = 1;
+    let renderedCount = 0;
+    let renderError = false;
+    let revealFrom = 0;
+    let revealTarget = 0;
+    let revealStart = 0;
+    let revealDuration = 0;
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const weaveTexture = makeWeaveTexture();
+    const revealLayer = makeCanvas(1, 1);
+    const revealContext = revealLayer.getContext('2d');
 
-    // CSS上の表示サイズと高DPI画面の実画素数を揃え、再描画時のぼやけを防ぐ。
+    const clamp = (value, low = 0, high = 1) => Math.max(low, Math.min(high, value));
+    const luminance = rgb => rgb[0] * .2126 + rgb[1] * .7152 + rgb[2] * .0722;
+    const cssColor = rgb => `rgb(${rgb.join(',')})`;
+    const yieldToBrowser = () => new Promise(resolve => setTimeout(resolve, 0));
+
+    function makeCanvas(width, height) {
+      const surface = document.createElement('canvas');
+      surface.width = width;
+      surface.height = height;
+      return surface;
+    }
+
+    // 毎フレーム何千本もの線を描かずに済むよう、織り目だけを小さな反復画像にする。
+    function makeWeaveTexture() {
+      const surface = makeCanvas(4, 4);
+      const ctx = surface.getContext('2d');
+      ctx.fillStyle = 'rgba(255,255,240,.08)'; ctx.fillRect(0, 0, 4, 1);
+      ctx.fillStyle = 'rgba(32,30,20,.06)'; ctx.fillRect(0, 0, 1, 4);
+      return surface;
+    }
+
+    // Canvasの実際の表示領域に追従する。CSS上の模様の大きさを一定に保ち、
+    // 縦横比が変わっても引き伸ばさず、繰り返しの見える範囲だけを増減させる。
     function resizeCanvas() {
-      const ratio = Math.min(window.devicePixelRatio || 1, 2);
-      const width = Math.max(1, Math.floor(window.innerWidth * ratio));
-      const height = Math.max(1, Math.floor(window.innerHeight * ratio));
+      const bounds = canvas.getBoundingClientRect();
+      canvasPixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      const width = Math.max(1, Math.round(bounds.width * canvasPixelRatio));
+      const height = Math.max(1, Math.round(bounds.height * canvasPixelRatio));
       if (canvas.width !== width || canvas.height !== height) {
         canvas.width = width;
         canvas.height = height;
       }
+      if (revealLayer.width !== width || revealLayer.height !== height) {
+        revealLayer.width = width;
+        revealLayer.height = height;
+      }
       drawPattern();
     }
 
-    // JPEGがまだ届いていないタイルを、歩行時メタデータから決定的に着色する。
-    // 同じmanifestなら再読込しても同じ粗い模様になり、画像到着後だけ見た目が変わる。
-    function placeholderColor(image, index) {
-      const sharpness = Number(image.sharpness) || 0;
-      const similarity = Number(image.similarity_mad) || 0;
-      const pressure = Number(image.fsr_peak) || 0;
-      const hue = (index * 37 + sharpness * 0.73 + similarity * 8.4) % 360;
-      const saturation = 24 + Math.min(38, pressure / 100);
-      const lightness = 24 + Math.min(34, Math.sqrt(sharpness) * 2.5);
-      return `hsl(${hue} ${saturation}% ${lightness}%)`;
+    // 積分画像で低周波の照明むらを求める。影を全部消すと石の立体感も失われるので、
+    // analyzeImageでは一部だけ差し引く。画面端は存在する画素だけを平均する。
+    function boxBlur(values, width, height, radius) {
+      const stride = width + 1;
+      const integral = new Float32Array(stride * (height + 1));
+      for (let y = 0; y < height; y++) {
+        let sum = 0;
+        for (let x = 0; x < width; x++) {
+          sum += values[y * width + x];
+          integral[(y + 1) * stride + x + 1] = integral[y * stride + x + 1] + sum;
+        }
+      }
+      const result = new Float32Array(values.length);
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const x0 = Math.max(0, x - radius), x1 = Math.min(width, x + radius + 1);
+          const y0 = Math.max(0, y - radius), y1 = Math.min(height, y + radius + 1);
+          result[y * width + x] = (integral[y1 * stride + x1] - integral[y0 * stride + x1]
+            - integral[y1 * stride + x0] + integral[y0 * stride + x0]) / ((x1 - x0) * (y1 - y0));
+        }
+      }
+      return result;
     }
 
-    // 画像の縦横比を保ったまま、タイル全面を覆うよう中央トリミングして描く。
-    function drawImageCover(image, x, y, width, height) {
-      const scale = Math.max(width / image.naturalWidth, height / image.naturalHeight);
-      const sourceWidth = width / scale;
-      const sourceHeight = height / scale;
-      const sourceX = (image.naturalWidth - sourceWidth) / 2;
-      const sourceY = (image.naturalHeight - sourceHeight) / 2;
-      context.drawImage(
-        image,
-        sourceX,
-        sourceY,
-        sourceWidth,
-        sourceHeight,
-        x,
-        y,
-        width,
-        height,
-      );
+    // 元写真の中心部分から明暗・輪郭・色を抽出する。物体認識や遠近補正はしない。
+    // 大きいローカル写真も縮小したCanvasだけを保持し、元のデコード画像は解放できる。
+    function analyzeImage(image, metadata) {
+      const preview = makeCanvas(SAMPLE_WIDTH, SAMPLE_HEIGHT);
+      const ctx = preview.getContext('2d', { willReadFrequently: true });
+      const iw = image.naturalWidth || image.width, ih = image.naturalHeight || image.height;
+      if (!iw || !ih) throw new Error('Image has no pixels');
+      const scale = Math.max(SAMPLE_WIDTH / iw, SAMPLE_HEIGHT / ih);
+      ctx.drawImage(image, (SAMPLE_WIDTH - iw * scale) / 2, (SAMPLE_HEIGHT - ih * scale) / 2, iw * scale, ih * scale);
+      const pixels = ctx.getImageData(0, 0, SAMPLE_WIDTH, SAMPLE_HEIGHT).data;
+      const raw = new Float32Array(SAMPLE_WIDTH * SAMPLE_HEIGHT);
+      const samples = [];
+      let mean = 0;
+      for (let i = 0; i < raw.length; i++) {
+        raw[i] = pixels[i * 4] * .2126 + pixels[i * 4 + 1] * .7152 + pixels[i * 4 + 2] * .0722;
+        mean += raw[i] / raw.length;
+        if (i % 173 === 0) samples.push([pixels[i * 4], pixels[i * 4 + 1], pixels[i * 4 + 2]]);
+      }
+      const smooth = boxBlur(raw, SAMPLE_WIDTH, SAMPLE_HEIGHT, 1);
+      const lighting = boxBlur(smooth, SAMPLE_WIDTH, SAMPLE_HEIGHT, 14);
+      const histogram = new Uint32Array(256);
+      const corrected = smooth.map((value, i) => clamp(value - .35 * (lighting[i] - mean), 0, 255));
+      for (const value of corrected) histogram[Math.round(value)]++;
+      const percentile = fraction => {
+        let count = 0;
+        for (let i = 0; i < 256; i++) {
+          count += histogram[i];
+          if (count >= raw.length * fraction) return i;
+        }
+        return 255;
+      };
+      const low = percentile(.06), high = percentile(.94);
+      // 一様な床の微小ノイズを強い模様に増幅しないよう、明暗の拡大率には上限を設ける。
+      const span = Math.max(65, high - low);
+      const center = (low + high) / 2;
+      const tone = corrected.map(value => clamp(.5 + (value - center) / span));
+      const edges = new Float32Array(raw.length);
+      const feature = new Float32Array(13);
+      for (let y = 1; y < SAMPLE_HEIGHT - 1; y++) {
+        for (let x = 1; x < SAMPLE_WIDTH - 1; x++) {
+          const i = y * SAMPLE_WIDTH + x;
+          const gx = smooth[i + 1] - smooth[i - 1];
+          const gy = smooth[i + SAMPLE_WIDTH] - smooth[i - SAMPLE_WIDTH];
+          edges[i] = clamp(Math.hypot(gx, gy) / 100);
+          feature[Math.min(7, Math.floor(tone[i] * 8))] += 1 / raw.length;
+          const direction = Math.floor(((Math.atan2(gy, gx) + Math.PI) % Math.PI) / Math.PI * 4);
+          feature[8 + Math.min(3, direction)] += edges[i] * 3 / raw.length;
+        }
+      }
+      feature[12] = (high - low) / 255;
+      return { metadata, preview, samples, tone, edges, feature };
     }
 
-    // manifestの全候補を先に格子として置き、取得済みタイルだけ床写真へ差し替える。
-    // これによりメタデータ到着直後から模様が現れ、転送に合わせて徐々に完成する。
-    function drawPattern() {
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      if (!activeManifest?.images?.length) {
+    // 同じ床を何歩も撮った場合にそれだけで素材が埋まらないよう、明暗分布と
+    // 輪郭の方向が離れた写真を選ぶ。選出後は元の撮影順に戻して散歩の流れを保つ。
+    function selectMotifs(sources) {
+      if (sources.length <= MAX_MOTIFS) return sources;
+      const selected = [0];
+      const distance = (a, b) => a.feature.reduce((sum, value, i) => sum + (value - b.feature[i]) ** 2, 0);
+      while (selected.length < MAX_MOTIFS) {
+        let best = -1, bestDistance = -1;
+        sources.forEach((source, i) => {
+          if (selected.includes(i)) return;
+          const nearest = Math.min(...selected.map(j => distance(source, sources[j])));
+          if (nearest > bestDistance) { best = i; bestDistance = nearest; }
+        });
+        selected.push(best);
+      }
+      return selected.sort((a, b) => a - b).map(i => sources[i]);
+    }
+
+    // 全写真から等間隔で取った色を5群にまとめ、共通の色調と明暗の役割を持たせる。
+    // 面積の小さい派手な色に引っ張られにくくしつつ、床由来の色味は残す。
+    function extractPalette(sources) {
+      if (!sources.length) return NEUTRAL_PALETTE;
+      const samples = sources.flatMap(source => source.samples);
+      const sorted = [...samples].sort((a, b) => luminance(a) - luminance(b));
+      let centers = Array.from({ length: 5 }, (_, i) => [...sorted[Math.floor((sorted.length - 1) * (i + .5) / 5)]]);
+      for (let iteration = 0; iteration < 7; iteration++) {
+        const sums = centers.map(() => [0, 0, 0, 0]);
+        for (const color of samples) {
+          let nearest = 0, distance = Infinity;
+          centers.forEach((center, i) => {
+            const d = (color[0] - center[0]) ** 2 * .3 + (color[1] - center[1]) ** 2 * .6 + (color[2] - center[2]) ** 2 * .1;
+            if (d < distance) { distance = d; nearest = i; }
+          });
+          color.forEach((value, channel) => { sums[nearest][channel] += value; });
+          sums[nearest][3]++;
+        }
+        centers = centers.map((center, i) => sums[i][3] ? sums[i].slice(0, 3).map(v => v / sums[i][3]) : center);
+      }
+      const mean = [0, 0, 0];
+      samples.forEach(color => color.forEach((v, i) => { mean[i] += v / samples.length; }));
+      const meanLuma = luminance(mean);
+      return centers.sort((a, b) => luminance(a) - luminance(b)).map((color, i) => {
+        const lightness = luminance(color);
+        const target = lightness * .55 + (36 + i * 48) * .45;
+        return color.map((v, channel) => Math.round(clamp(target + settings.color / 100
+          * ((v - lightness) * .55 + (mean[channel] - meanLuma) * .45), 0, 255)));
+      });
+    }
+
+    // 5色への量子化で写真らしい照明や細かい粒を整理し、輪郭だけを軽く強調する。
+    // 元の幾何形状は変形しないので、目地・市松・石の輪郭が模様の手掛かりになる。
+    function textureIndices(source) {
+      const softened = boxBlur(source.tone, SAMPLE_WIDTH, SAMPLE_HEIGHT, 2);
+      const detail = settings.detail / 100;
+      return Uint8Array.from(source.tone, (value, i) => Math.round(clamp(
+        softened[i] * (1 - detail) + value * detail - source.edges[i] * detail * .18) * 4));
+    }
+
+    function seededRandom(seed) {
+      let state = 2166136261;
+      for (const character of seed) state = Math.imul(state ^ character.charCodeAt(0), 16777619);
+      return () => {
+        state += 0x6D2B79F5;
+        let value = Math.imul(state ^ state >>> 15, 1 | state);
+        value ^= value + Math.imul(value ^ value >>> 7, 61 | value);
+        return ((value ^ value >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    // 重なり部分の誤差が最小になる縫い目を動的計画法で求める。
+    // 直線で切る代わりに似た明暗の間を通ることで、写真小片の四角い境界を目立たなくする。
+    function minimumSeam(cost, breadth, length) {
+      const accumulated = new Float32Array(cost.length);
+      const parents = new Int16Array(cost.length);
+      accumulated.set(cost.subarray(0, breadth));
+      for (let row = 1; row < length; row++) {
+        for (let x = 0; x < breadth; x++) {
+          let parent = x;
+          for (let dx = -1; dx <= 1; dx++) {
+            const candidate = x + dx;
+            if (candidate >= 0 && candidate < breadth && accumulated[(row - 1) * breadth + candidate] < accumulated[(row - 1) * breadth + parent]) parent = candidate;
+          }
+          accumulated[row * breadth + x] = cost[row * breadth + x] + accumulated[(row - 1) * breadth + parent];
+          parents[row * breadth + x] = parent;
+        }
+      }
+      let x = 0;
+      for (let i = 1; i < breadth; i++) if (accumulated[(length - 1) * breadth + i] < accumulated[(length - 1) * breadth + x]) x = i;
+      const seam = new Int16Array(length);
+      for (let row = length - 1; row >= 0; row--) { seam[row] = x; x = parents[row * breadth + x]; }
+      return seam;
+    }
+
+    // Image Quilting（Efros / Freeman）の重なり誤差と最小コスト境界を使った小規模版。
+    // https://graphics.cs.cmu.edu/people/efros/research/quilting.html
+    // 素材を斜めの領域へ割り当て、切り出し位置は継ぎ目の相性で選ぶ。
+    // 各段でUIへ処理を戻し、新しい写真やセッションが届いたら古い生成を中止できる。
+    async function quiltTextures(motifs, palette, version) {
+      const patch = 104, overlap = 28, step = patch - overlap;
+      const columns = Math.ceil((UNIT_WIDTH - patch) / step) + 1;
+      const rows = Math.ceil((UNIT_HEIGHT - patch) / step) + 1;
+      const width = (columns - 1) * step + patch, height = (rows - 1) * step + patch;
+      const output = new Uint8Array(width * height).fill(255);
+      const textures = motifs.map(textureIndices);
+      const random = seededRandom(motifs.map(source => source.metadata.filename).join('|'));
+      for (let row = 0; row < rows; row++) {
+        for (let column = 0; column < columns; column++) {
+          if (version !== renderVersion) return null;
+          const position = column / (columns - 1) * .72 + row / (rows - 1) * .28;
+          const texture = textures[Math.min(textures.length - 1, Math.floor(position * textures.length))];
+          const dx = column * step, dy = row * step;
+          let bestX = 0, bestY = 0, bestScore = Infinity;
+          const error = (x, y, sx, sy) => (output[(dy + y) * width + dx + x] - texture[(sy + y) * SAMPLE_WIDTH + sx + x]) ** 2;
+          for (let candidate = 0; candidate < 24; candidate++) {
+            const sx = Math.floor(random() * (SAMPLE_WIDTH - patch + 1));
+            const sy = Math.floor(random() * (SAMPLE_HEIGHT - patch + 1));
+            let score = 0;
+            if (column) for (let y = 0; y < patch; y += 3) for (let x = 0; x < overlap; x += 3) score += error(x, y, sx, sy);
+            if (row) for (let y = 0; y < overlap; y += 3) for (let x = column ? overlap : 0; x < patch; x += 3) score += error(x, y, sx, sy);
+            if (score < bestScore) { bestScore = score; bestX = sx; bestY = sy; }
+          }
+          let left = null, top = null;
+          if (column) {
+            const cost = new Float32Array(patch * overlap);
+            for (let y = 0; y < patch; y++) for (let x = 0; x < overlap; x++) cost[y * overlap + x] = error(x, y, bestX, bestY);
+            left = minimumSeam(cost, overlap, patch);
+          }
+          if (row) {
+            const cost = new Float32Array(patch * overlap);
+            for (let x = 0; x < patch; x++) for (let y = 0; y < overlap; y++) cost[x * overlap + y] = error(x, y, bestX, bestY);
+            top = minimumSeam(cost, overlap, patch);
+          }
+          for (let y = 0; y < patch; y++) for (let x = 0; x < patch; x++) {
+            if ((left && x < overlap && x < left[y]) || (top && y < overlap && y < top[x])) continue;
+            output[(dy + y) * width + dx + x] = texture[(bestY + y) * SAMPLE_WIDTH + bestX + x];
+          }
+        }
+        await yieldToBrowser();
+      }
+      const surface = makeCanvas(UNIT_WIDTH, UNIT_HEIGHT);
+      const ctx = surface.getContext('2d');
+      const pixels = ctx.createImageData(UNIT_WIDTH, UNIT_HEIGHT);
+      for (let y = 0; y < UNIT_HEIGHT; y++) for (let x = 0; x < UNIT_WIDTH; x++) {
+        const i = (y * UNIT_WIDTH + x) * 4;
+        const color = palette[output[y * width + x]];
+        pixels.data.set([...color, 255], i);
+      }
+      ctx.putImageData(pixels, 0, 0);
+      return surface;
+    }
+
+    // 単位模様を左右・上下に反転し、端が同じ色と形で接する連続リピートを作る。
+    // 原写真の四角い並びではなく、複数の床が混じった一つの反復模様として扱う。
+    function mirrorRepeat(unit) {
+      const repeat = makeCanvas(unit.width * 2, unit.height * 2);
+      const ctx = repeat.getContext('2d');
+      const source = unit.getContext('2d').getImageData(0, 0, unit.width, unit.height).data;
+      const pixels = ctx.createImageData(repeat.width, repeat.height);
+      // drawImageの反転補間に依存せず、境界の画素を同じ値で複製する。
+      for (let y = 0; y < repeat.height; y++) for (let x = 0; x < repeat.width; x++) {
+        const sx = x < unit.width ? x : repeat.width - 1 - x;
+        const sy = y < unit.height ? y : repeat.height - 1 - y;
+        const from = (sy * unit.width + sx) * 4, to = (y * repeat.width + x) * 4;
+        for (let channel = 0; channel < 4; channel++) pixels.data[to + channel] = source[from + channel];
+      }
+      ctx.putImageData(pixels, 0, 0);
+      return repeat;
+    }
+
+    // 額縁付きの固定サイズ原稿ではなく、画面全体へ繰り返せる単位模様を保持する。
+    // リサイズ時の再合成を不要にし、縦長のディスプレイでも床の形を歪ませない。
+    function composeMat(unit, palette) {
+      const aspect = unit ? unit.height / unit.width : UNIT_HEIGHT / UNIT_WIDTH;
+      const surface = makeCanvas(settings.scale, Math.round(settings.scale * aspect));
+      const ctx = surface.getContext('2d');
+      if (unit) {
+        ctx.drawImage(mirrorRepeat(unit), 0, 0, surface.width, surface.height);
+      } else {
+        ctx.fillStyle = cssColor(palette[4]);
+        ctx.fillRect(0, 0, surface.width, surface.height);
+      }
+      return surface;
+    }
+
+    // 画面表示とPNG保存で同じ描画経路を使い、どちらも領域の端まで模様で埋める。
+    // 織り目は単位模様とは別に重ね、リピート境界でも糸の間隔が変わらないようにする。
+    function fillPattern(target, tile, width, height, pixelRatio) {
+      target.save();
+      target.scale(pixelRatio, pixelRatio);
+      const displayWidth = width / pixelRatio, displayHeight = height / pixelRatio;
+      target.fillStyle = target.createPattern(tile, 'repeat');
+      target.fillRect(0, 0, displayWidth, displayHeight);
+      target.fillStyle = target.createPattern(weaveTexture, 'repeat');
+      target.fillRect(0, 0, displayWidth, displayHeight);
+      target.restore();
+    }
+
+    // 新しい写真の連続到着を短時間まとめ、古い生成結果で新しい画面を上書きしない。
+    function scheduleSynthesis() {
+      renderVersion++;
+      clearTimeout(renderTimer);
+      renderError = false;
+      document.querySelector('#save-pattern').disabled = true;
+      renderTimer = setTimeout(synthesizePattern, 160);
+    }
+
+    async function synthesizePattern() {
+      const version = renderVersion;
+      const sources = [...loadedImages.values()];
+      if (!sources.length) return;
+      rendering = true; updateProgress();
+      try {
+        const motifs = selectMotifs(sources);
+        const palette = extractPalette(sources);
+        const unit = await quiltTextures(motifs, palette, version);
+        if (!unit || version !== renderVersion) return;
+        previousArt = art;
+        art = composeMat(unit, palette);
+        transitionStart = performance.now();
+        renderedCount = sources.length;
+        advanceReveal(renderedCount / Math.max(1, Number(activeSession?.image_count) || 1));
+        updateMaterialPanel(motifs, palette, sources.length);
+        document.querySelector('#save-pattern').disabled = false;
+        drawPattern();
+      } catch (error) {
+        console.error('Pattern synthesis failed:', error);
+        if (version === renderVersion) renderError = true;
+      } finally {
+        if (version === renderVersion) { rendering = false; updateProgress(); }
+      }
+    }
+
+    // 広がりの進捗を0〜1で保持するので、縦横の画面切替でも進捗が巻き戻らない。
+    // 動きを減らす設定の場合も、実際に生成できた範囲だけを段階的に表示する。
+    function currentReveal(now = performance.now()) {
+      if (reducedMotion.matches || revealDuration === 0) return revealTarget;
+      const elapsed = clamp((now - revealStart) / revealDuration);
+      if (elapsed >= 1) return revealTarget;
+      const eased = elapsed * elapsed * (3 - 2 * elapsed);
+      return revealFrom + (revealTarget - revealFrom) * eased;
+    }
+
+    // サーバーの転送件数ではなく、ブラウザで模様に反映できた写真数を上限にする。
+    // 通信や画像処理が止まったらその位置で待ち、時刻だけで全画面を完成させない。
+    function advanceReveal(progress) {
+      const target = clamp(progress);
+      if (target <= revealTarget) return;
+      const now = performance.now();
+      revealFrom = currentReveal(now);
+      revealTarget = target;
+      revealStart = now;
+      revealDuration = Math.max(MIN_REVEAL_DURATION_MS, (target - revealFrom) * REVEAL_DURATION_MS);
+    }
+
+    // 模様そのものはぼかさず、円の縁だけ透明度をなだらかに下げて下地になじませる。
+    // ぼかし幅は画面サイズに合わせる。最後は不透明な内側が四隅を越えるまで広げ、
+    // 完了時に周辺の模様が急に濃くなるのを防ぐ。
+    function maskRevealedArea(target, progress) {
+      if (progress >= 1) return;
+      const { width, height } = target.canvas;
+      if (progress <= 0) {
+        target.clearRect(0, 0, width, height);
         return;
       }
+      const feather = clamp(Math.min(width, height) * .1, 32 * canvasPixelRatio, 100 * canvasPixelRatio);
+      const radius = (Math.hypot(width, height) / 2 + feather) * progress;
+      const mask = target.createRadialGradient(
+        width / 2, height / 2, Math.max(0, radius - feather),
+        width / 2, height / 2, radius,
+      );
+      mask.addColorStop(0, 'rgba(255,255,255,1)');
+      mask.addColorStop(.25, 'rgba(255,255,255,.844)');
+      mask.addColorStop(.5, 'rgba(255,255,255,.5)');
+      mask.addColorStop(.75, 'rgba(255,255,255,.156)');
+      mask.addColorStop(1, 'rgba(255,255,255,0)');
+      target.save();
+      target.globalCompositeOperation = 'destination-in';
+      target.fillStyle = mask;
+      target.fillRect(0, 0, width, height);
+      target.restore();
+    }
 
-      const images = activeManifest.images;
-      const aspect = canvas.width / canvas.height;
-      const columns = Math.max(1, Math.ceil(Math.sqrt(images.length * aspect)));
-      const rows = Math.max(1, Math.ceil(images.length / columns));
-      const tileWidth = canvas.width / columns;
-      const tileHeight = canvas.height / rows;
+    // 下地は常に全面に描き、生成できた範囲だけを模様へ置き換える。
+    // 後続画像による配色の変化は短くなじませ、進行待ち・完成後は描画を止める。
+    function drawPattern() {
+      cancelAnimationFrame(paintFrame);
+      paintFrame = 0;
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      if (!art) return;
+      const now = performance.now();
+      const progress = currentReveal(now);
+      const alpha = reducedMotion.matches || !previousArt ? 1 : clamp((now - transitionStart) / 650);
+      fillPattern(context, foundation || art, canvas.width, canvas.height, canvasPixelRatio);
+      if (progress > 0) {
+        // 下地まで透明にしないよう、模様だけを再利用する作業用Canvasでマスクする。
+        revealContext.clearRect(0, 0, canvas.width, canvas.height);
+        if (previousArt && alpha < 1) fillPattern(revealContext, previousArt, canvas.width, canvas.height, canvasPixelRatio);
+        revealContext.save();
+        revealContext.globalAlpha = alpha;
+        fillPattern(revealContext, art, canvas.width, canvas.height, canvasPixelRatio);
+        revealContext.restore();
+        maskRevealedArea(revealContext, progress);
+        context.drawImage(revealLayer, 0, 0);
+      }
+      if (alpha >= 1) previousArt = null;
+      if (alpha < 1 || progress < revealTarget) paintFrame = requestAnimationFrame(drawPattern);
+      else updateProgress();
+    }
 
-      images.forEach((metadata, index) => {
-        const column = index % columns;
-        const row = Math.floor(index / columns);
-        const x = column * tileWidth;
-        const y = row * tileHeight;
-        const image = loadedImages.get(metadata.storage_path);
-
-        context.save();
-        context.beginPath();
-        context.rect(x, y, tileWidth, tileHeight);
-        context.clip();
-        context.fillStyle = placeholderColor(metadata, index);
-        context.fillRect(x, y, tileWidth, tileHeight);
-
-        if (image) {
-          context.globalAlpha = 0.9;
-          drawImageCover(image, x, y, tileWidth, tileHeight);
-        } else {
-          context.globalAlpha = 0.16;
-          context.strokeStyle = '#fff';
-          context.lineWidth = Math.max(1, canvas.width / 1200);
-          context.beginPath();
-          context.moveTo(x, y + tileHeight);
-          context.lineTo(x + tileWidth, y);
-          context.stroke();
-        }
-        context.restore();
-
-        context.strokeStyle = 'rgba(255, 255, 255, 0.08)';
-        context.lineWidth = Math.max(1, canvas.width / 1800);
-        context.strokeRect(x, y, tileWidth, tileHeight);
+    function updateMaterialPanel(motifs, palette, count) {
+      const swatches = document.querySelector('#palette'); swatches.replaceChildren();
+      palette.forEach(color => {
+        const swatch = document.createElement('span'); swatch.style.background = cssColor(color);
+        swatch.title = `#${color.map(v => v.toString(16).padStart(2, '0')).join('')}`;
+        swatches.append(swatch);
+      });
+      const list = document.querySelector('#source-list'); list.replaceChildren();
+      document.querySelector('#source-label').textContent = count > MAX_MOTIFS
+        ? `${count}枚から選んだ${motifs.length}つの質感` : '模様のもとになった床';
+      motifs.forEach(source => {
+        const button = document.createElement('button'); button.className = 'source';
+        button.title = source.metadata.filename;
+        button.setAttribute('aria-label', `${source.metadata.filename}を確認`);
+        const thumbnail = makeCanvas(SAMPLE_WIDTH, SAMPLE_HEIGHT);
+        thumbnail.getContext('2d').drawImage(source.preview, 0, 0); button.append(thumbnail);
+        button.onclick = () => {
+          document.querySelector('#source-title').textContent = source.metadata.filename;
+          const preview = document.querySelector('#source-preview');
+          preview.getContext('2d').drawImage(source.preview, 0, 0, preview.width, preview.height);
+          document.querySelector('#source-dialog').showModal();
+        };
+        list.append(button);
       });
     }
 
@@ -233,7 +657,7 @@
       const sessionId = activeSession?.id;
       const serial = activationSerial;
       imageLoadQueue = imageLoadQueue.then(async () => {
-        if (!activeManifest || activeSession?.id !== sessionId) {
+        if (mode !== 'live' || !activeManifest || serial !== activationSerial || activeSession?.id !== sessionId) {
           return;
         }
 
@@ -254,8 +678,9 @@
             if (serial !== activationSerial) {
               return;
             }
-            loadedImages.set(metadata.storage_path, image);
-            drawPattern();
+            loadedImages.set(metadata.storage_path, analyzeImage(image, metadata));
+            scheduleSynthesis();
+            updateProgress();
           } catch (error) {
             // DB更新がStorageの反映よりわずかに先に見える場合を考慮し、次のポーリング
             // またはRealtime更新で再試行できるようMapには追加しない。
@@ -263,106 +688,229 @@
             break;
           }
         }
+      }).catch(error => {
+        // 1回の例外でPromise列全体が失敗状態に固定されないよう、次の通知で再試行する。
+        console.error('Image queue failed:', error);
       });
     }
 
-    // 現在のセッション状態を短い進捗表示へ反映する。作品表示を妨げないよう、
-    // エラー詳細はconsoleへ出し、画面には状態と枚数だけを残す。
+    // 通常表示に文字やバーは重ねず、状態・エラーは調整パネルと支援技術へ伝える。
     function updateProgress() {
       if (!activeSession) {
-        statusText.textContent = '靴を置くのを待っています';
-        progressBar.style.width = '0%';
+        statusText.textContent = supabaseClient ? '靴を置くのを待っています' : '手元の写真で模様を試せます';
+        canvas.setAttribute('aria-busy', 'false');
+        canvas.setAttribute('aria-label', '歩いた床の形と色から織り上げる玄関マットの模様');
         return;
       }
 
       const total = Math.max(1, Number(activeSession.image_count) || 1);
-      const uploaded = Math.min(total, Number(activeSession.uploaded_count) || 0);
-      const percent = Math.round((uploaded / total) * 100);
-      const labels = {
-        uploading: '旅の断片を受信しています',
-        complete: '旅の模様が完成しました',
-        failed: '転送を待ち直しています',
-      };
-      statusText.textContent = `${labels[activeSession.status] || activeSession.status}  ${uploaded}/${total}`;
-      progressBar.style.width = `${percent}%`;
+      const count = loadedImages.size;
+      const progress = currentReveal();
+      let label = '床の写真を受け取っています';
+      if (renderError) label = '生成に失敗しました。写真や調整値を変えてください';
+      else if (localImporting) label = '手元の写真を読み込んでいます';
+      else if (rendering || renderedCount < count) label = '床の断片を織り合わせています';
+      else if (mode === 'local' && localErrors) label = `模様を作成しました（${localErrors}枚は読込不可）`;
+      else if (progress < revealTarget) label = '中心から円形に模様を織り上げています';
+      else if (count === total && activeSession.status === 'complete') label = '歩いた場所が、一枚の模様になりました';
+      else if (activeSession.status === 'failed') label = '届いた写真で織りながら、再転送を待っています';
+      else if (!count) label = '模様の下地を用意しました。写真を待っています';
+      statusText.textContent = `${label}  ${count}/${total}`;
+      canvas.setAttribute('aria-busy', String(progress < 1 || rendering || localImporting));
+      canvas.setAttribute('aria-label', `歩いた床から作るマットの模様。生成 ${Math.round(progress * 100)}%`);
     }
 
-    // 新しいセッションでは最初にmanifestだけを取得し、粗い模様を直ちに表示する。
-    // 同じセッションのUPDATEではmanifestを再取得せず、画像の追加だけを進める。
-    async function applySession(session) {
-      if (!session?.id) {
-        return;
-      }
-
-      if (activeSession?.id === session.id) {
-        activeSession = session;
-        updateProgress();
-        queueAvailableImages();
-        return;
-      }
-
-      activeSession = session;
-      activeManifest = null;
-      activationSerial += 1;
-      const serial = activationSerial;
+    // セッション変更や手元写真への切替で、古い非同期処理・画像・書き出しをまとめて無効化する。
+    function resetMaterials() {
+      activationSerial++;
+      renderVersion++;
+      clearTimeout(renderTimer);
+      cancelAnimationFrame(paintFrame);
+      paintFrame = 0;
       loadedImages.clear();
+      imageLoadQueue = Promise.resolve();
+      manifestRequest = null;
+      activeManifest = null;
+      art = previousArt = foundation = null;
+      revealFrom = revealTarget = revealStart = revealDuration = 0;
+      renderedCount = 0;
+      rendering = renderError = false;
+      localErrors = 0;
+      updateMaterialPanel([], NEUTRAL_PALETTE, 0);
+      document.querySelector('#save-pattern').disabled = true;
+      document.body.classList.remove('has-session');
+      document.querySelector('#source-dialog').close();
+      drawPattern();
+    }
+
+    function showFoundation() {
+      // 特徴量だけでは床の形や色は分からないため、この段階では無地の織り下地を表示する。
+      foundation = composeMat(null, NEUTRAL_PALETTE);
+      art = foundation;
+      document.body.classList.add('has-session');
+      drawPattern();
+    }
+
+    // 同一セッションのmanifest取得は重ねず、失敗した場合は10秒後の確認で再試行する。
+    // 遅れて届いた古いセッションの通知で、今回のマットに過去写真が混ざるのを防ぐ。
+    async function applySession(session) {
+      if (mode !== 'live' || !session?.id) return;
+      if (activeSession && activeSession.id !== session.id &&
+          Date.parse(session.created_at) < Date.parse(activeSession.created_at)) return;
+      if (activeSession?.id !== session.id) resetMaterials();
+      else if (Number(session.uploaded_count) < Number(activeSession.uploaded_count) ||
+          (activeSession.status === 'complete' && session.status !== 'complete')) return;
+      activeSession = session;
       updateProgress();
-
-      const { data, error } = await supabaseClient.storage
-        .from(STORAGE_BUCKET)
-        .download(session.manifest_path);
-      if (serial !== activationSerial || activeSession?.id !== session.id) {
-        return;
-      }
-      if (error) {
-        console.error('Manifest download failed:', error);
-        statusText.textContent = 'メタデータを取得できませんでした';
-        return;
-      }
-
+      if (activeManifest) { queueAvailableImages(); return; }
+      if (manifestRequest) return;
+      const serial = activationSerial;
+      manifestRequest = session.id;
       try {
+        const { data, error } = await supabaseClient.storage.from(STORAGE_BUCKET).download(session.manifest_path);
+        if (serial !== activationSerial) return;
+        if (error) throw error;
         const manifest = JSON.parse(await data.text());
-        if (serial !== activationSerial || activeSession?.id !== session.id) {
-          return;
-        }
-        if (manifest.session_id !== session.id || !Array.isArray(manifest.images)) {
+        if (serial !== activationSerial) return;
+        if (manifest.session_id !== session.id || !Array.isArray(manifest.images) ||
+            !manifest.images.length || manifest.images.length > MAX_IMAGES ||
+            manifest.images.length !== Number(session.image_count) ||
+            manifest.images.some(image => typeof image.filename !== 'string' ||
+              typeof image.storage_path !== 'string' || !image.storage_path.startsWith(`sessions/${session.id}/images/`)) ||
+            new Set(manifest.images.map(image => image.storage_path)).size !== manifest.images.length) {
           throw new Error('Manifest does not match the session');
         }
         activeManifest = manifest;
-        document.body.classList.add('has-session');
-        drawPattern();
+        showFoundation();
         queueAvailableImages();
       } catch (error) {
-        console.error('Manifest parse failed:', error);
-        statusText.textContent = 'メタデータの形式が不正です';
+        console.error('Manifest download or parse failed:', error);
+        if (serial === activationSerial) statusText.textContent = '画像一覧を取得できませんでした。再接続を待っています';
+      } finally {
+        if (serial === activationSerial) manifestRequest = null;
       }
     }
 
     // Realtime切断や画面の再読み込みにも耐えるよう、最新行を定期確認する。
     // 通常はRealtimeが即時反映し、このポーリングは取りこぼし時の保険として働く。
     async function fetchLatestSession() {
-      const { data, error } = await supabaseClient
-        .from('transfer_sessions')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (error) {
+      if (mode !== 'live' || !supabaseClient || fetchInProgress) return;
+      fetchInProgress = true;
+      const serial = activationSerial;
+      try {
+        const { data, error } = await supabaseClient
+          .from('transfer_sessions').select('*').order('created_at', { ascending: false }).limit(1).maybeSingle();
+        if (mode !== 'live' || serial !== activationSerial) return;
+        if (error) throw error;
+        if (data) await applySession(data);
+        else updateProgress();
+      } catch (error) {
         console.error('Session fetch failed:', error);
-        statusText.textContent = 'Supabaseへ接続できません';
-        return;
+        if (mode === 'live') statusText.textContent = '受信先への再接続を待っています';
+      } finally {
+        fetchInProgress = false;
       }
-      if (data) {
-        await applySession(data);
-      } else {
+    }
+
+    // ローカル写真の試用は端末内だけで行い、Supabaseの読み書きとは切り離す。
+    // 読めない形式を1枚選んでも残りは処理し、選び直したときは旧処理を取り消す。
+    async function importLocalImages(fileList) {
+      const files = [...fileList].filter(file => file.type.startsWith('image/') || /\.(jpe?g|png|webp|avif|heic|heif)$/i.test(file.name)).slice(0, MAX_IMAGES);
+      if (!files.length) { statusText.textContent = 'JPEGやPNGの床写真を選んでください'; return; }
+      mode = 'local'; resetMaterials(); localImporting = true;
+      const serial = activationSerial;
+      activeSession = { id: `local-${serial}`, image_count: files.length, uploaded_count: files.length, status: 'complete' };
+      document.querySelector('#resume-live').hidden = false;
+      document.querySelector('#local-note').textContent = fileList.length > MAX_IMAGES
+        ? `先頭の${MAX_IMAGES}枚を使用します。写真はアップロードされません。` : '写真はこのブラウザ内だけで処理しています。';
+      showFoundation(); updateProgress();
+      for (let i = 0; i < files.length; i++) {
+        if (serial !== activationSerial) return;
+        const url = URL.createObjectURL(files[i]);
+        try {
+          const image = new Image(); image.src = url; await image.decode();
+          if (serial !== activationSerial) return;
+          const metadata = { filename: files[i].name, storage_path: `local/${serial}/${i}` };
+          loadedImages.set(metadata.storage_path, analyzeImage(image, metadata));
+          scheduleSynthesis(); updateProgress();
+        } catch (error) {
+          if (serial !== activationSerial) return;
+          localErrors++; console.warn('Local image could not be read:', files[i].name, error);
+        } finally { URL.revokeObjectURL(url); }
+        await yieldToBrowser();
+      }
+      if (serial === activationSerial) {
+        localImporting = false;
         updateProgress();
+        if (!loadedImages.size) statusText.textContent = '写真を読み込めませんでした。JPEGまたはPNGでお試しください';
       }
+    }
+
+    // 展示中はUIもカーソルも出さない。調整時だけSキー、またはURL末尾の
+    // ?settings=1で開く（キーボードのない表示端末でも設定画面へ入れるようにする）。
+    function setToolsOpen(open) {
+      const panel = document.querySelector('#tools');
+      panel.hidden = !open;
+      document.body.classList.toggle('settings-open', open);
+      if (open) document.querySelector('#close-tools').focus({ preventScroll: true });
+      else {
+        document.querySelector('#source-dialog').close();
+        if (panel.contains(document.activeElement)) document.activeElement.blur();
+      }
+    }
+
+    function installControls() {
+      document.querySelector('#close-tools').onclick = () => setToolsOpen(false);
+      window.addEventListener('keydown', event => {
+        if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || document.querySelector('#source-dialog').open) return;
+        if (event.key === 'Escape' && !document.querySelector('#tools').hidden) {
+          event.preventDefault(); setToolsOpen(false);
+        } else if (event.key.toLowerCase() === 's' &&
+            !event.target.closest('input, textarea, select, [contenteditable="true"]')) {
+          event.preventDefault(); setToolsOpen(document.querySelector('#tools').hidden);
+        }
+      });
+      setToolsOpen(new URLSearchParams(window.location.search).get('settings') === '1');
+      for (const [key, id, labels, low, high] of [
+        ['scale', 'pattern-scale', ['細かく', 'ふつう', '大きく'], 440, 600],
+        ['detail', 'pattern-detail', ['やわらかく', 'ほどよく', 'くっきり'], 35, 75],
+        ['color', 'pattern-color', ['ほぼ無彩色', 'おだやか', '色を残す'], 15, 65],
+      ]) {
+        document.querySelector(`#${id}`).oninput = event => {
+          settings[key] = Number(event.target.value);
+          document.querySelector(`#${key}-value`).textContent = labels[settings[key] < low ? 0 : settings[key] > high ? 2 : 1];
+          if (loadedImages.size) scheduleSynthesis();
+        };
+      }
+      const input = document.querySelector('#image-input');
+      document.querySelector('#choose-images').onclick = () => input.click();
+      input.onchange = async () => { await importLocalImages(input.files); input.value = ''; };
+      document.querySelector('#resume-live').onclick = async () => {
+        mode = 'live'; localImporting = false; resetMaterials(); activeSession = null;
+        document.querySelector('#resume-live').hidden = true;
+        document.querySelector('#local-note').textContent = '選んだ写真はこのブラウザ内で処理します。アップロードはしません。';
+        updateProgress(); await fetchLatestSession();
+      };
+      document.querySelector('#close-source').onclick = () => document.querySelector('#source-dialog').close();
+      document.querySelector('#save-pattern').onclick = () => {
+        if (!art || !renderedCount) return;
+        const surface = makeCanvas(canvas.width, canvas.height);
+        // 生成途中なら、円形に広がる模様と周囲の下地を含めた現在の見た目を保存する。
+        surface.getContext('2d').drawImage(canvas, 0, 0);
+        surface.toBlob(blob => {
+          if (!blob) { statusText.textContent = '画像を書き出せませんでした'; return; }
+          const url = URL.createObjectURL(blob);
+          const link = document.createElement('a'); link.href = url; link.download = 'a-soles-travel-diary-mat.png';
+          link.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+        }, 'image/png');
+      };
+      updateMaterialPanel([], NEUTRAL_PALETTE, 0);
     }
 
     // obnizはindex.htmlの実行基盤として接続し、ボード側には準備状態だけを表示する。
     // 画像通知と本体転送はSupabase経由なので、obniz接続断が描画を止めない構成。
     function connectObniz() {
-      if (OBNIZ_ID.includes('X')) {
+      if (OBNIZ_ID.includes('X') || typeof Obniz === 'undefined') {
         console.warn('Replace XXXX-XXXX with the obniz ID.');
         return;
       }
@@ -380,12 +928,22 @@
     // Supabaseの初回読込後にRealtimeを購読する。INSERTで生成開始、UPDATEで
     // JPEG取得数を進める。SQL側でtransfer_sessionsをRealtime対象にする必要がある。
     async function start() {
+      installControls();
       resizeCanvas();
       window.addEventListener('resize', resizeCanvas);
+      document.addEventListener('fullscreenchange', resizeCanvas);
+      // 親要素やブラウザUIによる表示領域の変化も、window.resizeだけに頼らず拾う。
+      const canvasResizeObserver = new ResizeObserver(resizeCanvas);
+      canvasResizeObserver.observe(canvas);
       connectObniz();
 
       if (SUPABASE_URL === 'SUPABASE_URL' || SUPABASE_KEY === 'SUPABASE_KEY') {
-        statusText.textContent = 'SupabaseのURLとKEYを設定してください';
+        updateProgress();
+        return;
+      }
+
+      if (typeof supabase === 'undefined') {
+        statusText.textContent = '受信の準備ができませんでした。手元の写真では試せます';
         return;
       }
 
