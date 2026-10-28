@@ -104,9 +104,9 @@
     <p id="status-text" role="status" aria-live="polite">初期化しています</p>
     <label class="control"><span>模様の大きさ <output id="scale-value">ふつう</output></span><input id="pattern-scale" type="range" min="320" max="720" value="520" step="20"></label>
     <label class="control"><span>床の輪郭 <output id="detail-value">ほどよく</output></span><input id="pattern-detail" type="range" min="0" max="100" value="60" step="5"></label>
-    <label class="control"><span>色味 <output id="color-value">おだやか</output></span><input id="pattern-color" type="range" min="0" max="100" value="30" step="5"></label>
+    <label class="control"><span>色味 <output id="color-value">おだやか</output></span><input id="pattern-color" type="range" min="0" max="100" value="60" step="5"></label>
     <div>歩いた場所のパレット</div>
-    <div id="palette" aria-label="模様に使う5色"></div>
+    <div id="palette" aria-label="模様の明暗と色調の基準になる5色"></div>
     <div id="source-label">模様のもとになった床</div>
     <div id="source-list"></div>
     <div class="tool-actions">
@@ -120,7 +120,7 @@
   <dialog id="source-dialog">
     <header><h2 id="source-title">模様のもとになった床</h2><button class="button" id="close-source" aria-label="写真を閉じる">閉じる</button></header>
     <canvas id="source-preview" width="384" height="288"></canvas>
-    <p>この写真の明暗と輪郭を、共通の5色に置き換えて使っています。写真が多いときは、質感の異なる最大6枚を模様の素材に選びます。</p>
+    <p>共通の5段階の明暗に、この写真の色味を重ねて使っています。境界は軽くぼかしてなじませています。写真が多いときは、質感の異なる最大6枚を模様の素材に選びます。</p>
   </dialog>
 
   <script>
@@ -146,7 +146,7 @@
     const REVEAL_DURATION_MS = 4200;
     const MIN_REVEAL_DURATION_MS = 450;
     const NEUTRAL_PALETTE = [[53, 61, 49], [100, 110, 91], [148, 154, 131], [188, 188, 163], [224, 219, 197]];
-    const settings = { scale: 520, detail: 60, color: 30 };
+    const settings = { scale: 520, detail: 60, color: 60 };
 
     let supabaseClient = null;
     let activeSession = null;
@@ -344,6 +344,22 @@
       });
     }
 
+    // 全写真の平均色だけでは、別々の床の赤み・青みまで同じになってしまう。
+    // 明暗の役割は共有したまま、各床の色差を主に使う。彩度はextractPaletteで調整済み。
+    function sourcePalette(source, shared) {
+      return extractPalette([source]).map((local, i) => {
+        const lightness = luminance(shared[i]), localLightness = luminance(local);
+        const tint = local.map((value, c) => .8 * (value - localLightness) + .2 * (shared[i][c] - lightness));
+        // 一色のRGB成分を別々に切り詰めず、色差全体を縮めて色相と明暗を保つ。
+        let strength = 1;
+        for (const value of tint) {
+          if (value > 0) strength = Math.min(strength, (255 - lightness) / value);
+          else if (value < 0) strength = Math.min(strength, -lightness / value);
+        }
+        return tint.map(value => Math.round(clamp(lightness + value * strength, 0, 255)));
+      });
+    }
+
     // 5色への量子化で写真らしい照明や細かい粒を整理し、輪郭だけを軽く強調する。
     // 元の幾何形状は変形しないので、目地・市松・石の輪郭が模様の手掛かりになる。
     function textureIndices(source) {
@@ -398,13 +414,16 @@
       const rows = Math.ceil((UNIT_HEIGHT - patch) / step) + 1;
       const width = (columns - 1) * step + patch, height = (rows - 1) * step + patch;
       const output = new Uint8Array(width * height).fill(255);
+      const owners = new Uint8Array(width * height);
       const textures = motifs.map(textureIndices);
+      const palettes = motifs.map(source => sourcePalette(source, palette));
       const random = seededRandom(motifs.map(source => source.metadata.filename).join('|'));
       for (let row = 0; row < rows; row++) {
         for (let column = 0; column < columns; column++) {
           if (version !== renderVersion) return null;
           const position = column / (columns - 1) * .72 + row / (rows - 1) * .28;
-          const texture = textures[Math.min(textures.length - 1, Math.floor(position * textures.length))];
+          const sourceIndex = Math.min(textures.length - 1, Math.floor(position * textures.length));
+          const texture = textures[sourceIndex];
           const dx = column * step, dy = row * step;
           let bestX = 0, bestY = 0, bestScore = Infinity;
           const error = (x, y, sx, sy) => (output[(dy + y) * width + dx + x] - texture[(sy + y) * SAMPLE_WIDTH + sx + x]) ** 2;
@@ -430,6 +449,8 @@
           for (let y = 0; y < patch; y++) for (let x = 0; x < patch; x++) {
             if ((left && x < overlap && x < left[y]) || (top && y < overlap && y < top[x])) continue;
             output[(dy + y) * width + dx + x] = texture[(bestY + y) * SAMPLE_WIDTH + bestX + x];
+            // 継ぎ目の旧画素を残すときは、その画素が由来する床の色味も残す。
+            owners[(dy + y) * width + dx + x] = sourceIndex;
           }
         }
         await yieldToBrowser();
@@ -439,11 +460,24 @@
       const pixels = ctx.createImageData(UNIT_WIDTH, UNIT_HEIGHT);
       for (let y = 0; y < UNIT_HEIGHT; y++) for (let x = 0; x < UNIT_WIDTH; x++) {
         const i = (y * UNIT_WIDTH + x) * 4;
-        const color = palette[output[y * width + x]];
+        const index = y * width + x;
+        const color = palettes[owners[index]][output[index]];
         pixels.data.set([...color, 255], i);
       }
+      softenPatternEdges(pixels, UNIT_WIDTH, UNIT_HEIGHT);
       ctx.putImageData(pixels, 0, 0);
       return surface;
+    }
+
+    // 模様の形や配置を変えず、色面と継ぎ目の硬さだけを少し和らげる。
+    // 鏡像化の前に不透明なRGBだけをぼかし、反復の縁に透けや段差を作らない。
+    // 織り目は後で別に重ねるので、布の質感までぼけることはない。
+    function softenPatternEdges(pixels, width, height) {
+      for (let channel = 0; channel < 3; channel++) {
+        const values = Float32Array.from({ length: width * height }, (_, i) => pixels.data[i * 4 + channel]);
+        const softened = boxBlur(boxBlur(values, width, height, 2), width, height, 1);
+        for (let i = 0; i < softened.length; i++) pixels.data[i * 4 + channel] = Math.round(softened[i]);
+      }
     }
 
     // 単位模様を左右・上下に反転し、端が同じ色と形で接する連続リピートを作る。
